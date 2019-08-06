@@ -16,9 +16,7 @@ pub(crate) fn serialize_entity_to_disk<T: serde::Serialize>(full_path: String, e
 }
 
 /// Deserialized an entity to the disk
-pub(crate) fn deserialize_entity_from_disk<'de, T: serde::de::DeserializeOwned>(
-    full_path: String,
-) -> Result<T, Box<ErrorKind>> {
+pub(crate) fn deserialize_entity_from_disk<'de, T: serde::de::DeserializeOwned>(full_path: String) -> Result<T, Box<ErrorKind>> {
     let reader = BufReader::new(File::open(sanitize_path(full_path)).unwrap());
     let entity: Result<T, _> = bincode::config().deserialize_from(reader);
     entity
@@ -26,12 +24,7 @@ pub(crate) fn deserialize_entity_from_disk<'de, T: serde::de::DeserializeOwned>(
 
 #[allow(dead_code)]
 fn condense_str_vec(str_vec: Vec<&str>) -> String {
-    let mut builder = String::new();
-    for val in str_vec {
-        builder.push_str(val);
-    }
-
-    builder
+    str_vec.concat()
 }
 
 /// The default name for the default EntropyBank
