@@ -69,14 +69,14 @@ impl EntropyBank {
     }
 
     /// Saves the EntropyBank to the hard drive
-    pub fn save<'a>(&mut self, name: Option<String>) -> Result<Arc<RwLock<Self>>, QuantumError<'a>> {
+    pub fn save<'a>(&mut self, name: Option<String>) -> Result<(), QuantumError<'a>> {
         let name = name.unwrap_or(ENTROPY_BANK_DEFAULT_FILE.to_string());
         self.name = Some(name.to_string());
-        let entity = self.replicate();
-        if let Err(_) = serialize_entity_to_disk(format!("{}cfg/{}.entropy", get_home_dir(), name), Arc::clone(&entity)) {
+        let obj = self.clone();
+        if let Err(_) = serialize_entity_to_disk(format!("{}cfg/{}.entropy", get_home_dir(), name), obj) {
             return QuantumError::throw("[QuantumRandom] Unable to serialize entity to disk!");
         }
-        Ok(Arc::clone(&entity))
+        Ok(())
     }
 
     /// TODO: Stop deserializing it constantly, this is actually a security risk in the case of a local virus
