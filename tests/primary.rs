@@ -7,8 +7,8 @@ use quantum_random::prelude::*;
 
 #[test]
 fn fetch() {
-    let number_to_get = 11000;
-    match block_on(next_i128s(number_to_get)) {
+    let number_to_get = 10240;
+    match block_on(next_u8s(number_to_get)) {
         Ok(vals) => {
             for val in vals.iter().enumerate() {
                 println!("[{}]: {}", val.0, val.1);
@@ -16,7 +16,7 @@ fn fetch() {
             assert_eq!(vals.len(), number_to_get);
         },
         Err(err) => {
-            err.printf();
+            println!("Error");
         }
     }
 }

@@ -6,7 +6,6 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use bincode::ErrorKind;
-use std::error::Error;
 
 #[allow(unused_must_use)]
 /// Serializes an entity to the disk
@@ -60,40 +59,27 @@ pub(crate) fn get_home_dir() -> String {
     format!("{}\\{}\\", j, HOME_DIR)
 }
 
-use std::fmt::{Display, Debug, Formatter};
-use std::marker::PhantomData;
-
-#[derive(Debug)]
-/// Allows easy propagation of errors
-pub struct StringedError<'a, T: 'a + ToString + Display + Debug>(T, PhantomData<&'a T>);
-
-/// Convenience wrapper for a boxe'd error
-pub type QuantumError<'a> = Box<StringedError<'a, String>>;
-
-/// Allows easy throwing of errors
-pub trait Throwable<'a, E: Error> {
-    /// Inner type
-    /// Throws a returnable error
-    fn throw<U, T: ToString + Display>(input: T) -> Result<U, E>;
-
-    /// Prints the error
-    fn printf(self) -> Self;
-}
-impl<'a, T: 'a + ToString + Display + Debug> Error for StringedError<'a, T> {}
-
-impl<'a> Throwable<'a, Self> for QuantumError<'a> {
-    fn throw<U, T: ToString + Display>(input: T) -> Result<U, Self> {
-        Err(Box::new(StringedError(input.to_string(), PhantomData)))
-    }
-
-    fn printf(self) -> Self{
-        println!("{}", self.0);
-        self
-    }
+/// Default Error type for this crate
+pub enum QuantumError {
+    /// Generic Error
+    Generic(String),
 }
 
-impl<'a, T: 'a + ToString + Display + Debug> Display for StringedError<'a, T> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", self.0)
+impl QuantumError {
+    /// Conveniance method
+    pub fn throw<U>(input: &str) -> Result<U, QuantumError> {
+        Err(QuantumError::Generic(input.to_string()))
+    }
+
+    /// Conveniance method
+    pub fn throw_string<U>(input: String) -> Result<U, QuantumError> {
+        Err(QuantumError::Generic(input))
+    }
+
+    /// For converting into downstream error types
+    pub fn to_string(self) -> String {
+        match self {
+            QuantumError::Generic(e) => e
+        }
     }
 }

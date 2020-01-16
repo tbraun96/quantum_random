@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use byteorder::*;
 use chrono::{DateTime, Local, Utc};
-use futures::FutureExt;
+//use futures::{FutureExt, StreamExt, TryStreamExt, TryFutureExt};
+use futures::StreamExt;
 use mut_static::MutStatic;
 use parking_lot::RwLock;
 use rand::prelude::*;
@@ -12,7 +13,6 @@ use rand::thread_rng;
 use rayon::prelude::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-
 use crate::util::*;
 
 /// There are 1024 x 1024 possible hex values. There are thus 1024 x 1024 x 2 possible bytes
@@ -53,7 +53,7 @@ impl EntropyBank {
     }
 
     /// Returns an EntropyBank asynchronously
-    pub async fn new_async<'a>(size: u32) -> Result<Arc<RwLock<Self>>, QuantumError<'a>> {
+    pub async fn new_async(size: u32) -> Result<Arc<RwLock<Self>>, QuantumError> {
         get_data_async(size).await.and_then(move |data| {
             Ok(EntropyBank::new(data))
         })
@@ -69,7 +69,7 @@ impl EntropyBank {
     }
 
     /// Saves the EntropyBank to the hard drive
-    pub fn save<'a>(&mut self, name: Option<String>) -> Result<(), QuantumError<'a>> {
+    pub fn save(&mut self, name: Option<String>) -> Result<(), QuantumError> {
         let name = name.unwrap_or(ENTROPY_BANK_DEFAULT_FILE.to_string());
         self.name = Some(name.to_string());
         let obj = self.clone();
@@ -80,7 +80,7 @@ impl EntropyBank {
     }
 
     /// TODO: Stop deserializing it constantly, this is actually a security risk in the case of a local virus
-    pub async fn load<'a>(name_opt: Option<String>) -> Result<Arc<RwLock<Self>>, QuantumError<'a>> {
+    pub async fn load(name_opt: Option<String>) -> Result<Arc<RwLock<Self>>, QuantumError> {
         let name_is_none = name_opt.is_none();
         let name = name_opt.unwrap_or(ENTROPY_BANK_DEFAULT_FILE.to_string());
         let fname = sanitize_path(format!("{}cfg/{}.entropy", get_home_dir(), name));
@@ -121,7 +121,7 @@ impl EntropyBank {
     }
 
     /// Shuffles the EntropyBank and returns a reference to the newly allocated array for read access
-    pub fn shuffle_and_get<'a>(&mut self, len: usize, save: bool) -> Result<Vec<u8>, QuantumError<'a>> {
+    pub fn shuffle_and_get(&mut self, len: usize, save: bool) -> Result<Vec<u8>, QuantumError> {
         println!("bank size: {}", self.bank.as_mut().unwrap().len());
         // TODO: Use quantum random rng
         self.bank.as_mut().unwrap().shuffle(&mut thread_rng());
@@ -136,9 +136,9 @@ impl EntropyBank {
 }
 
 /// Returns the raw bytes.
-async fn get_raw_data_async<'a>(length: usize, mut _retry_count: usize) -> Result<Vec<u8>, QuantumError<'a>> {
+async fn get_raw_data_async(length: usize, mut _retry_count: usize) -> Result<Vec<u8>, QuantumError> {
     if length as u32 > MAX_BLOCK_SIZE {
-        return QuantumError::throw(format!("[QuantumRandom] Error! You cannot call this function with a parameter greater than {}", MAX_BLOCK_SIZE));
+        return QuantumError::throw_string(format!("[QuantumRandom] Error! You cannot call this function with a parameter greater than {}", MAX_BLOCK_SIZE));
     }
 
     //We only want 1 reqwest client
@@ -155,7 +155,7 @@ async fn get_raw_data_async<'a>(length: usize, mut _retry_count: usize) -> Resul
         }
         Ok(data)
     }).or_else(|err| {
-        QuantumError::throw(format!("[QuantumRandom] Unable to download data! Reason: {}", err.to_string()))
+        QuantumError::throw_string(format!("[QuantumRandom] Unable to download data! Reason: {}", err.to_string()))
     }).and_then(move |input| extract_values_anu(length, input))
         .and_then(|vector| Ok(vector))
 }
@@ -180,10 +180,8 @@ mod providers {
             if len_total <= 1024 {
                 (1, len_total)
             } else {
-                let val = (len_total as f64) / (1024 as f64);
-                let len = math::round::ceil(val, 0) as usize;
                 //println!("We want {}, and are using {} x 1024 to get it", len_total, len);
-                (len, 1024)
+                (((len_total as f64) / (1024 as f64)).ceil() as usize, 1024)
             }
         };
 
@@ -195,7 +193,7 @@ mod providers {
 }
 
 /// Extracts the bytes from the downloaded string for anu qrng
-pub fn extract_values_anu<'a>(len_expected: usize, data: String) -> Result<Vec<u8>, QuantumError<'a>> {
+pub fn extract_values_anu(len_expected: usize, data: String) -> Result<Vec<u8>, QuantumError> {
     if !data.contains("\"success\":true") {
         return QuantumError::throw("[QuantumRandom] Data downloaded, but invalid data detected!");
     }
@@ -218,7 +216,7 @@ pub fn extract_values_anu<'a>(len_expected: usize, data: String) -> Result<Vec<u
 
 
 /// Asyncronously splits the number of requests to maximize the volume of traffic
-async fn get_data_async<'a>(length: u32) -> Result<Vec<u8>, QuantumError<'a>> {
+async fn get_data_async(length: u32) -> Result<Vec<u8>, QuantumError> {
     let mut futures0 = vec![];
     let mut iter_count = 0;
 
@@ -243,26 +241,22 @@ async fn get_data_async<'a>(length: u32) -> Result<Vec<u8>, QuantumError<'a>> {
         return QuantumError::throw("[QuantumRandom] unable to setup asynchronous split streams");
     }
 
-
-    futures::future::join_all(futures0).map(|arr| {
-        let mut vec = Vec::<u8>::with_capacity(length as usize);
-        for res in arr {
+    Ok(futures::stream::iter(futures0.into_iter())
+        .fold(Vec::with_capacity(length as usize), |mut acc, fut| async {
+            let res = fut.await.and_then(|res| Ok(res));
             match res {
-                Ok(mut res) => {
-                    vec.append(&mut res);
-                }
-                Err(err) => {
-                    return Err(err);
-                }
+                Ok(vec) => {
+                    acc.extend(vec);
+                    acc
+                },
+                Err(_) => Vec::with_capacity(0)
             }
-        }
-        Ok(vec)
-    }).await
+        }).await)
 }
 
 /// Asynchronously produces `len` number of u8's from the local EntropyBank
 #[allow(dead_code)]
-async fn next_u8s_eb<'a>(len: usize) -> Result<Vec<u8>, QuantumError<'a>> {
+async fn next_u8s_eb(len: usize) -> Result<Vec<u8>, QuantumError> {
     EntropyBank::load(None).await.and_then(move |res| {
         if let Ok(res) = res.write().shuffle_and_get(len, false) {
             Ok(res)
@@ -273,17 +267,17 @@ async fn next_u8s_eb<'a>(len: usize) -> Result<Vec<u8>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `length` number of u8's
-async fn get_data<'a>(length: usize) -> Result<Vec<u8>, QuantumError<'a>> {
+async fn get_data(length: usize) -> Result<Vec<u8>, QuantumError> {
     get_data_async(length as u32).await
 }
 
 /// Asynchronously produces `len` number of u8's
-pub async fn next_u8s<'a>(len: usize) -> Result<Vec<u8>, QuantumError<'a>> {
+pub async fn next_u8s(len: usize) -> Result<Vec<u8>, QuantumError> {
     get_data(len).await
 }
 
 /// Asynchronously produces `len` number of u16's
-pub async fn next_u16s<'a>(len: usize) -> Result<Vec<u16>, QuantumError<'a>> {
+pub async fn next_u16s(len: usize) -> Result<Vec<u16>, QuantumError> {
     get_data(len * 2).await.and_then(move |res| {
         Ok(res.par_chunks(2).take(len).map(|chunk| {
             BigEndian::read_u16(chunk)
@@ -292,7 +286,7 @@ pub async fn next_u16s<'a>(len: usize) -> Result<Vec<u16>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of u32's
-pub async fn next_u32s<'a>(len: usize) -> Result<Vec<u32>, QuantumError<'a>> {
+pub async fn next_u32s(len: usize) -> Result<Vec<u32>, QuantumError> {
     get_data(len * 4).await.and_then(move |res| {
         Ok(res.par_chunks(4).take(len).map(|chunk| {
             BigEndian::read_u32(chunk)
@@ -301,7 +295,7 @@ pub async fn next_u32s<'a>(len: usize) -> Result<Vec<u32>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of u64's
-pub async fn next_u64s<'a>(len: usize) -> Result<Vec<u64>, QuantumError<'a>> {
+pub async fn next_u64s(len: usize) -> Result<Vec<u64>, QuantumError> {
     get_data(len * 8).await.and_then(move |res| {
         Ok(res.par_chunks(8).take(len).map(|chunk| {
             BigEndian::read_u64(chunk)
@@ -310,7 +304,7 @@ pub async fn next_u64s<'a>(len: usize) -> Result<Vec<u64>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of u128's
-pub async fn next_u128s<'a>(len: usize) -> Result<Vec<u128>, QuantumError<'a>> {
+pub async fn next_u128s(len: usize) -> Result<Vec<u128>, QuantumError> {
     get_data(len * 16).await.and_then(move |res| {
         Ok(res.par_chunks(16).take(len).map(|chunk| {
             BigEndian::read_u128(chunk)
@@ -319,7 +313,7 @@ pub async fn next_u128s<'a>(len: usize) -> Result<Vec<u128>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of i8's
-pub async fn next_i8s<'a>(len: usize) -> Result<Vec<i8>, QuantumError<'a>> {
+pub async fn next_i8s(len: usize) -> Result<Vec<i8>, QuantumError> {
     get_data(len).await.and_then(|res| {
         Ok(res.iter().map(|byte| {
             u8_to_i8(byte)
@@ -328,7 +322,7 @@ pub async fn next_i8s<'a>(len: usize) -> Result<Vec<i8>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of i16's
-pub async fn next_i16s<'a>(len: usize) -> Result<Vec<i16>, QuantumError<'a>> {
+pub async fn next_i16s(len: usize) -> Result<Vec<i16>, QuantumError> {
     get_data(len * 2).await.and_then(move |res| {
         Ok(res.par_chunks(2).take(len).map(|chunk| {
             u16_to_i16(&BigEndian::read_u16(chunk))
@@ -337,7 +331,7 @@ pub async fn next_i16s<'a>(len: usize) -> Result<Vec<i16>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of i32's
-pub async fn next_i32s<'a>(len: usize) -> Result<Vec<i32>, QuantumError<'a>> {
+pub async fn next_i32s(len: usize) -> Result<Vec<i32>, QuantumError> {
     get_data(len * 4).await.and_then(move |res| {
         Ok(res.par_chunks(4).take(len).map(|chunk| {
             u32_to_i32(&BigEndian::read_u32(chunk))
@@ -346,7 +340,7 @@ pub async fn next_i32s<'a>(len: usize) -> Result<Vec<i32>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of i64's
-pub async fn next_i64s<'a>(len: usize) -> Result<Vec<i64>, QuantumError<'a>> {
+pub async fn next_i64s(len: usize) -> Result<Vec<i64>, QuantumError> {
     get_data(len * 8).await.and_then(move |res| {
         Ok(res.par_chunks(8).take(len).map(|chunk| {
             u64_to_i64(&BigEndian::read_u64(chunk))
@@ -355,7 +349,7 @@ pub async fn next_i64s<'a>(len: usize) -> Result<Vec<i64>, QuantumError<'a>> {
 }
 
 /// Asynchronously produces `len` number of i128's
-pub async fn next_i128s<'a>(len: usize) -> Result<Vec<i128>, QuantumError<'a>> {
+pub async fn next_i128s(len: usize) -> Result<Vec<i128>, QuantumError> {
     get_data(len * 16).await.and_then(move |res| {
         Ok(res.par_chunks(16).take(len).map(|chunk| {
             u128_to_i128(&BigEndian::read_u128(chunk))

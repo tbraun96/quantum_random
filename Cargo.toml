@@ -15,14 +15,13 @@ exclude = [
 
 [dependencies]
 reqwest = "0.9.19"
-futures-preview = { version= "0.3.0-alpha.18", features = ["async-await", "nightly", "compat"]}
+futures-preview = { version= "0.3.0-alpha.19", features = ["async-await", "compat"]}
 rand = "0.6.5"
 rayon = "1.1.0"
 parking_lot = {version = "0.9.0", features = ["nightly", "serde"]}
-
 serde = "1.0.92"
 dirs-2 = "1.1.0"
-bincode = "1.1.4"
+bincode = "1.2.1"
 byteorder = "1.3.1"
 lazy_static = "1.3.0"
 mut_static = "5.0.0"
